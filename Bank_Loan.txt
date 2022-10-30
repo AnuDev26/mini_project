@@ -85,16 +85,9 @@ copy into bank_loan
 from @my_s3_stage
 file_format=my_csv_format
 pattern='.*Loan[1-4].csv'
-on_error='continue';
 alter pipe bank_loan_pipe refresh;
 select SYSTEM$PIPE_STATUS('bank_loan_pipe');
 show pipes;
-
-
-truncate table bank_loan;
-
-
-
 ----------------------SCD-2--------------------------------------
 create or replace stream loan_check on table bank_loan;
 

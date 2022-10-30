@@ -54,7 +54,10 @@ copy into bank_loan
 from @my_s3_stage
 file_format=my_csv_format
 pattern='.*Loan[1-4].csv'
-on_error='skip_file';
+
+--validation_mode=return_all_errors;
+--set qid=last_query_id();
+--copy into @my_s3_stage from (select rejected_record from table(result_scan($qid)));
 
 select * from bank_loan;
 

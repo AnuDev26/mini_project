@@ -72,7 +72,7 @@ copy into bank_loan
 from @my_s3_stage
 file_format=my_csv_format
 pattern='.*Loan[1-4].csv'
-on_error='skip_file';
+
 show tasks;
 select *
   from table(information_schema.task_history());

@@ -1,0 +1,210 @@
+create or replace storage integration s3_int
+  type = external_stage
+  storage_provider = s3
+  enabled = true
+  storage_aws_role_arn = 'arn:aws:iam::537678156951:role/bank'
+  storage_allowed_locations = ('s3://bankloan/');
+
+DESC INTEGRATION s3_int;
+
+create or replace file format my_csv_format
+type = csv field_delimiter = ',' skip_header = 1 null_if = ('NULL', 'null') empty_field_as_null = true;
+
+desc file format my_csv_format;
+
+create or replace stage my_s3_stage
+  storage_integration = s3_int
+  url ='s3://bankloan/'
+  file_format = my_csv_format;
+  
+  create or replace table bank_loan(
+  ID number,
+  Year number,
+  loan_limit string,
+  Gender string,
+  approv_in_adv string,
+  loan_purpose varchar,
+  redit_Worthiness varchar,
+open_credit string,
+business_or_commercial string,
+loan_amount number,
+rate_of_interest float,
+Interest_rate_spread float,
+Upfront_charges float,
+term number,
+Neg_ammortization string,
+interest_only string,
+lump_sum_payment string,
+property_value number,
+Secured_by	string,
+total_units varchar,
+income float,
+credit_type	string,
+Credit_Score number,
+co_applicant_credit_type string,
+age varchar,
+LTV float,
+Region string,
+Security_Type string,
+Status number,
+dtir1 int);
+
+
+copy into bank_loan
+from @my_s3_stage
+file_format=my_csv_format
+pattern='.*Loan[1-4].csv'
+on_error='skip_file';
+
+select * from bank_loan;
+
+------------------------SCHEDULER-----------------------------------
+
+CREATE or replace TASK bank_task
+  WAREHOUSE = "Bankloan",
+  SCHEDULE = 'USING CRON 0 0 * * 4 Asia/Kolkata'
+  TIMESTAMP_INPUT_FORMAT = 'YYYY-MM-DD HH24'
+AS 
+copy into bank_loan
+from @my_s3_stage
+file_format=my_csv_format
+pattern='.*Loan[1-4].csv'
+on_error='skip_file';
+show tasks;
+select *
+  from table(information_schema.task_history());
+  
+alter task bank_task resume;
+alter task bank_task suspend;
+-----------------SNOW-PIPE--------------------------------------
+create pipe bank_loan_pipe auto_ingest = true as
+copy into bank_loan
+from @my_s3_stage
+file_format=my_csv_format
+pattern='.*Loan[1-4].csv'
+on_error='continue';
+alter pipe bank_loan_pipe refresh;
+select SYSTEM$PIPE_STATUS('bank_loan_pipe');
+show pipes;
+
+
+truncate table bank_loan;
+
+
+
+----------------------SCD-2--------------------------------------
+create or replace stream loan_check on table bank_loan;
+
+create or replace  
+table bank_loan_target(ID number,
+Year number,
+loan_limit string,
+Gender string,approv_in_adv string, loan_purpose varchar,redit_Worthiness varchar,open_credit string,business_or_commercial string,loan_amount number,rate_of_interest float,Interest_rate_spread float,Upfront_charges float,term number,Neg_ammortization string,interest_only string,lump_sum_payment string,property_value number,Secured_by	string,total_units varchar,income float,credit_type	string,
+Credit_Score number,co_applicant_credit_type string,age varchar,LTV float,Region string,Security_Type string,Status number,dtir1 int, stream_type string default null, rec_version number default 0,REC_DATE TIMESTAMP_LTZ);
+
+merge into bank_loan_target t
+using loan_check c 
+on t.id=c.id and (metadata$action='DELETE')
+when matched and metadata$isupdate='FALSE' then update set rec_version=9999, stream_type='DELETE'
+when matched and metadata$isupdate='TRUE' then update set rec_version=rec_version-1,stream_type='INSERT'
+when not matched then insert  (ID,Year,loan_limit,Gender,approv_in_adv,loan_purpose,redit_Worthiness,open_credit,business_or_commercial,loan_amount,rate_of_interest,Interest_rate_spread,Upfront_charges,term,Neg_ammortization,interest_only,lump_sum_payment,property_value,Secured_by,total_units,income,credit_type,Credit_Score,co_applicant_credit_type,age,LTV,Region,Security_Type,Status,dtir1,stream_type,rec_version,REC_DATE) 
+values(c.ID,c.Year ,c.loan_limit ,c.Gender ,c.approv_in_adv ,c.loan_purpose ,c.redit_Worthiness ,c.open_credit ,c.business_or_commercial ,c.loan_amount ,c.rate_of_interest ,c.Interest_rate_spread ,
+c.Upfront_charges ,c.term ,c.Neg_ammortization ,c.interest_only ,c.lump_sum_payment ,c.property_value ,
+c.Secured_by	,c.total_units ,c.income ,c.credit_type	,c.Credit_Score ,c.co_applicant_credit_type ,
+c.age ,c.LTV ,c.Region ,c.Security_Type ,c.Status,c.dtir1 , metadata$action,0,CURRENT_TIMESTAMP() );
+
+select * from loan_check;
+
+select * from Bank_loan_target;
+
+
+-------------ROW LEVEL SECURITY-------------------------
+----------------step 1---------------------
+create or replace role north;
+create or replace role north_east;
+create or replace role south;
+create or replace role central;
+
+create or replace user north_admin password = 'temp123' default_Role = 'north_manager';
+grant role north to user north_admin;
+
+create or replace user north_east_admin  password = 'temp123' default_Role = 'north_east_manager';
+grant role north_east to user north_east_admin ;
+
+create or replace user south_admin password = 'temp123' default_Role = 'south_manager';
+grant role south to user south_admin;
+
+create or replace user central_admin password = 'temp123' default_Role = 'central_manager';
+grant role central to user central_admin ;
+
+select current_user();
+
+grant role north to user SPRINTGROUP1;
+grant role south to user SPRINTGROUP1;
+grant role north_east to user SPRINTGROUP1;
+grant role central to user SPRINTGROUP1;
+
+--------------------------------step 2--------------------------------
+
+                           
+grant usage on warehouse "Bankloan" to role north;
+grant usage on warehouse "Bankloan" to role north_east;
+grant usage on warehouse "Bankloan" to role south;
+grant usage on warehouse "Bankloan" to role central;
+
+grant usage on database "BankloanDB" to role north;
+grant usage on database "BankloanDB" to role north_east;
+grant usage on database "BankloanDB" to role south;
+grant usage on database "BankloanDB" to role central;
+
+grant usage on schema public to role north;
+grant usage on schema public to role north_east;
+grant usage on schema public to role south;
+grant usage on schema public to role central;
+
+----------------------------------step 3-------------------------------------
+
+create or replace secure view vw_loan as
+select * from bank_loan 
+where upper(Region) =upper(current_role());
+               
+select current_role();
+               
+grant select on view "BankloanDB"."PUBLIC"."VW_LOAN" to role NORTH;
+grant select on view "BankloanDB"."PUBLIC"."VW_LOAN" to role NORTH_EAST;
+grant select on view "BankloanDB"."PUBLIC"."VW_LOAN" to role SOUTH;
+grant select on view "BankloanDB"."PUBLIC"."VW_LOAN" to role CENTRAL;
+
+
+
+------------------------STEP 4----------------------------------------------
+-- Verify the rows for north manager role
+use role NORTH;
+use database "BankloanDB";
+use schema PUBLIC;
+
+select * from VW_LOAN;
+
+select * from VW_LOAN where Region = 'south';
+-- Verify the rows for south manager role
+use role SOUTH;
+
+use database "BankloanDB";
+use schema PUBLIC;
+
+select * from VW_LOAN;
+
+-- Verify the rows for northeast manager role
+use role NORTH_EAST;
+
+use database "BankloanDB";
+use schema PUBLIC;
+
+select * from VW_LOAN;
+-- Verify the rows for central manager role
+use role CENTRAL;
+
+use database "BankloanDB";
+use schema PUBLIC;
+
+select * from VW_LOAN;
